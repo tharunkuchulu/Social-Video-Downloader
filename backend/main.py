@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import yt_dlp
 import os
+import subprocess
 from typing import List
 
 app = FastAPI()
 
-# CORS Middleware (already permissive, kept as is)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allows all origins (e.g., http://localhost:3000)
@@ -17,10 +17,18 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Test ffmpeg availability
+try:
+    result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, check=True)
+    print(f"ffmpeg is installed and accessible: {result.stdout.splitlines()[0]}")
+except subprocess.CalledProcessError as e:
+    print(f"ffmpeg check failed: {e}")
+except FileNotFoundError:
+    print("ffmpeg is not found in PATH. Please ensure ffmpeg is installed and added to your PATH.")
+
 # Folder to save downloaded videos
 DOWNLOAD_FOLDER = "downloads"
 
-# Store download history (in-memory for simplicity; use a DB for persistence)
 download_history = []
 
 # Ensure the downloads folder exists
@@ -45,7 +53,7 @@ async def upload_excel(file: UploadFile):
     # Read Excel file
     try:
         df = pd.read_excel(temp_file)
-        print(f"Columns in Excel file: {df.columns.tolist()}")  # Debug
+        print(f"Columns in Excel file: {df.columns.tolist()}")  # Debug: Print column names
         df.columns = df.columns.str.strip().str.lower()  # Normalize column names
         print(f"Normalized columns: {df.columns.tolist()}")  # Debug
         if "video_link" not in df.columns:
@@ -54,6 +62,7 @@ async def upload_excel(file: UploadFile):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading Excel file: {str(e)}")
     finally:
+        # Only attempt to delete the file if it exists
         if os.path.exists(temp_file):
             try:
                 os.remove(temp_file)
@@ -63,24 +72,30 @@ async def upload_excel(file: UploadFile):
     # Download videos
     try:
         results = await download_videos(links)
-        download_history.extend(results)  # Add to history
+        download_history.extend(results)
         return JSONResponse(content={"results": results})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error downloading videos: {str(e)}")
 
 async def download_videos(links: List[str]):
     ydl_opts = {
-        "format": "bestvideo+bestaudio/best",  # Best quality MP4
+        "format": "bestvideo+bestaudio/best",  # Best quality video + audio
         "outtmpl": f"{DOWNLOAD_FOLDER}/%(title)s.%(ext)s",  # Save to downloads folder
         "merge_output_format": "mp4",  # Ensure MP4 output
+        "ffmpeg_location": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",  # Specify the exact path
+        "verbose": True,  # Enable verbose output for debugging
+        "noplaylist": True,  # Avoid downloading playlists
+        "ignoreerrors": False,  # Stop on errors to catch issues
     }
     results = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         for link in links:
             try:
+                print(f"Starting download for {link}")
                 ydl.download([link])
                 results.append({"link": link, "status": "success"})
             except Exception as e:
+                print(f"Failed to download {link}: {str(e)}")
                 results.append({"link": link, "status": "failed", "error": str(e)})
     return results
 
@@ -88,7 +103,7 @@ async def download_videos(links: List[str]):
 async def test_download():
     links = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]  # Test URL
     results = await download_videos(links)
-    download_history.extend(results)  # Add to history
+    download_history.extend(results)
     return JSONResponse(content={"results": results})
 
 @app.get("/downloads/")
