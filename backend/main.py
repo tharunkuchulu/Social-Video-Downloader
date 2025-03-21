@@ -11,10 +11,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (e.g., http://localhost:3000)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, OPTIONS, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Test ffmpeg availability
@@ -45,27 +45,38 @@ async def upload_excel(file: UploadFile):
     # Save uploaded file temporarily
     temp_file = f"temp_{file.filename}"
     try:
+        # Write the file content to disk
+        content = await file.read()
+        print(f"File size: {len(content)} bytes")  # Debug: Check file size
         with open(temp_file, "wb") as buffer:
-            buffer.write(await file.read())
+            buffer.write(content)
+        # Verify the file exists and is accessible
+        if not os.path.exists(temp_file):
+            raise HTTPException(status_code=500, detail="Failed to write temporary file")
+        print(f"Temporary file created: {temp_file}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
 
     # Read Excel file
     try:
-        df = pd.read_excel(temp_file)
-        print(f"Columns in Excel file: {df.columns.tolist()}")  # Debug: Print column names
-        df.columns = df.columns.str.strip().str.lower()  # Normalize column names
-        print(f"Normalized columns: {df.columns.tolist()}")  # Debug
+        df = pd.read_excel(temp_file, engine="openpyxl")
+        print(f"Columns in Excel file: {df.columns.tolist()}")
+        df.columns = df.columns.str.strip().str.lower()
+        print(f"Normalized columns: {df.columns.tolist()}")
         if "video_link" not in df.columns:
             raise ValueError("Excel file must contain a 'video_link' column")
-        links = df["video_link"].tolist()
+        links = df["video_link"].dropna().tolist()  # Drop any NaN values
+        if not links:
+            raise ValueError("No valid video links found in the Excel file")
+        print(f"Extracted links: {links}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reading Excel file: {str(e)}")
     finally:
-        # Only attempt to delete the file if it exists
+        # Ensure the file is closed before deleting
         if os.path.exists(temp_file):
             try:
                 os.remove(temp_file)
+                print(f"Temporary file deleted: {temp_file}")
             except Exception as e:
                 print(f"Warning: Failed to delete temp file {temp_file}: {str(e)}")
 
@@ -79,13 +90,13 @@ async def upload_excel(file: UploadFile):
 
 async def download_videos(links: List[str]):
     ydl_opts = {
-        "format": "bestvideo+bestaudio/best",  # Best quality video + audio
-        "outtmpl": f"{DOWNLOAD_FOLDER}/%(title)s.%(ext)s",  # Save to downloads folder
-        "merge_output_format": "mp4",  # Ensure MP4 output
-        "ffmpeg_location": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",  # Specify the exact path
-        "verbose": True,  # Enable verbose output for debugging
-        "noplaylist": True,  # Avoid downloading playlists
-        "ignoreerrors": False,  # Stop on errors to catch issues
+        "format": "bestvideo+bestaudio/best",
+        "outtmpl": f"{DOWNLOAD_FOLDER}/%(title)s.%(ext)s",
+        "merge_output_format": "mp4",
+        "ffmpeg_location": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+        "verbose": True,
+        "noplaylist": True,
+        "ignoreerrors": False,
     }
     results = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -95,16 +106,20 @@ async def download_videos(links: List[str]):
                 ydl.download([link])
                 results.append({"link": link, "status": "success"})
             except Exception as e:
-                print(f"Failed to download {link}: {str(e)}")
-                results.append({"link": link, "status": "failed", "error": str(e)})
+                error_msg = str(e)
+                print(f"Failed to download {link}: {error_msg}")
+                results.append({"link": link, "status": "failed", "error": error_msg})
     return results
 
 @app.get("/test-download/")
 async def test_download():
-    links = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]  # Test URL
-    results = await download_videos(links)
-    download_history.extend(results)
-    return JSONResponse(content={"results": results})
+    links = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    try:
+        results = await download_videos(links)
+        download_history.extend(results)
+        return JSONResponse(content={"results": results})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in test download: {str(e)}")
 
 @app.get("/downloads/")
 async def get_download_history():

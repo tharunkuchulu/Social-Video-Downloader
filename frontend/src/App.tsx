@@ -14,14 +14,14 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const BACKEND_URL = "http://localhost:8000"; // Ensure this matches your FastAPI server
+  const BACKEND_URL = "http://localhost:8000";
 
   // Fetch download history on component mount
   useEffect(() => {
     const fetchHistory = async () => {
       try {
         const response = await axios.get(`${BACKEND_URL}/downloads/`);
-        setHistory(response.data.downloads);
+        setHistory(response.data.downloads || []);
       } catch (error: any) {
         console.error("Error fetching history:", error);
         setError("Failed to fetch history. Check console for details.");
@@ -31,13 +31,21 @@ const App: React.FC = () => {
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setFile(e.target.files[0]);
+    if (e.target.files) {
+      setFile(e.target.files[0]);
+      setError(null);
+    }
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file) {
+      setError("Please select an Excel file to upload.");
+      return;
+    }
     setLoading(true);
     setError(null);
+    setResults([]);
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -45,13 +53,12 @@ const App: React.FC = () => {
       const response = await axios.post(`${BACKEND_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setResults(response.data.results);
+      setResults(response.data.results || []);
       // Refresh history after upload
       const historyResponse = await axios.get(`${BACKEND_URL}/downloads/`);
-      setHistory(historyResponse.data.downloads);
+      setHistory(historyResponse.data.downloads || []);
     } catch (error: any) {
       console.error("Error uploading file:", error);
-      setResults([{ link: "", status: "failed", error: error.message }]);
       if (error.response) {
         setError(`Server error: ${error.response.status} - ${error.response.data.detail}`);
       } else if (error.request) {
@@ -65,20 +72,56 @@ const App: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: "20px" }}>
+    <div style={{ padding: "20px", maxWidth: "600px", margin: "0 auto" }}>
       <h1>Video Downloader</h1>
-      <input type="file" accept=".xlsx" onChange={handleFileChange} />
-      <button onClick={handleUpload} disabled={!file || loading}>
-        {loading ? "Processing..." : "Upload & Download"}
-      </button>
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      <div style={{ marginBottom: "20px" }}>
+        <label htmlFor="file-upload" style={{ display: "block", marginBottom: "10px" }}>
+          Upload Excel File (.xlsx):
+        </label>
+        <input
+          id="file-upload"
+          type="file"
+          accept=".xlsx"
+          onChange={handleFileChange}
+          disabled={loading}
+          style={{ marginBottom: "10px" }}
+        />
+        <button
+          onClick={handleUpload}
+          disabled={!file || loading}
+          style={{
+            padding: "10px 20px",
+            backgroundColor: loading ? "#ccc" : "#007bff",
+            color: "white",
+            border: "none",
+            borderRadius: "5px",
+            cursor: loading || !file ? "not-allowed" : "pointer",
+          }}
+        >
+          {loading ? "Processing..." : "Upload & Download"}
+        </button>
+      </div>
+      {error && (
+        <div style={{ color: "red", marginBottom: "20px" }}>
+          {error}
+        </div>
+      )}
       {results.length > 0 && (
         <div>
-          <h2>Results</h2>
-          <ul>
+          <h2>Download Results</h2>
+          <ul style={{ listStyleType: "none", padding: 0 }}>
             {results.map((result, index) => (
-              <li key={index}>
-                {result.link}: {result.status === "success" ? "Downloaded" : `Failed (${result.error})`}
+              <li
+                key={index}
+                style={{
+                  padding: "10px",
+                  backgroundColor: result.status === "success" ? "#e6ffe6" : "#ffe6e6",
+                  marginBottom: "5px",
+                  borderRadius: "5px",
+                }}
+              >
+                <strong>{result.link}</strong>:{" "}
+                {result.status === "success" ? "Downloaded" : `Failed (${result.error})`}
               </li>
             ))}
           </ul>
@@ -87,10 +130,19 @@ const App: React.FC = () => {
       {history.length > 0 && (
         <div>
           <h2>Download History</h2>
-          <ul>
+          <ul style={{ listStyleType: "none", padding: 0 }}>
             {history.map((entry, index) => (
-              <li key={index}>
-                {entry.link}: {entry.status === "success" ? "Downloaded" : `Failed (${entry.error})`}
+              <li
+                key={index}
+                style={{
+                  padding: "10px",
+                  backgroundColor: entry.status === "success" ? "#e6ffe6" : "#ffe6e6",
+                  marginBottom: "5px",
+                  borderRadius: "5px",
+                }}
+              >
+                <strong>{entry.link}</strong>:{" "}
+                {entry.status === "success" ? "Downloaded" : `Failed (${entry.error})`}
               </li>
             ))}
           </ul>
