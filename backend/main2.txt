@@ -107,3 +107,6 @@ if __name__ == "__main__":
 
     command for single link testing:
     yt-dlp -v "link" -o "test_video.%(ext)s" --format "bestvideo+bestaudio/best" --merge-output-format mp4 --ffmpeg-location "C:/Program Files/ffmpeg/bin/ffmpeg.exe"^C
+
+    mongoDB string:
+    mongodb+srv://tharunvankayala:kuchulu2002@cluster0.89xxg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
