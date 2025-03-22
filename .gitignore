@@ -29,6 +29,4 @@ venv/
 grok.txt
 install_ffempg.txt
 
-
-
-
+.env

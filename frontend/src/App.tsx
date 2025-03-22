@@ -7,17 +7,29 @@ interface DownloadResult {
   error?: string;
 }
 
+interface ProgressUpdate {
+  type: string;
+  current?: number;
+  total?: number;
+  link?: string;
+  status?: string;
+  error?: string;
+  message?: string;
+  results?: DownloadResult[];
+}
+
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [singleLink, setSingleLink] = useState("");
   const [bulkResults, setBulkResults] = useState<DownloadResult[]>([]);
   const [singleResult, setSingleResult] = useState<DownloadResult | null>(null);
   const [history, setHistory] = useState<DownloadResult[]>([]);
-  const [showHistory, setShowHistory] = useState(false); // State to control history visibility
+  const [showHistory, setShowHistory] = useState(false);
   const [loadingBulk, setLoadingBulk] = useState(false);
   const [loadingSingle, setLoadingSingle] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
+  const [progress, setProgress] = useState<{ current: number; total: number; link: string; status: string } | null>(null);
 
   // Fetch list of downloaded files
   const fetchDownloadedFiles = async () => {
@@ -39,9 +51,21 @@ const App: React.FC = () => {
     }
   };
 
+  // Clear download history
+  const clearHistory = async () => {
+    try {
+      await axios.delete("http://localhost:8000/downloads/clear-history/");
+      setHistory([]);
+    } catch (err) {
+      console.error("Error clearing history:", err);
+      setError("Failed to clear download history. Please try again.");
+    }
+  };
+
   useEffect(() => {
     fetchDownloadedFiles();
-    // Do not fetch history on initial load; fetch only when the button is clicked
+    setBulkResults([]);
+    setSingleResult(null);
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,44 +75,131 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUploadExcel = async () => {
+  const connectWebSocket = (retries = 5, delay = 3000): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const attemptConnection = (remainingRetries: number) => {
+        console.log(`Attempting WebSocket connection (${remainingRetries} retries left)...`);
+        const ws = new WebSocket("ws://127.0.0.1:8000/ws/download-all/");
+        ws.onopen = () => {
+          console.log("WebSocket connected successfully");
+          ws.onmessage = (event) => {
+            console.log("WebSocket message received:", event.data);
+            const data: ProgressUpdate = JSON.parse(event.data);
+            if (data.type === "heartbeat") {
+              console.log("Received WebSocket heartbeat");
+              return;
+            }
+            if (data.type === "progress") {
+              setProgress({
+                current: data.current || 0,
+                total: data.total || 0,
+                link: data.link || "",
+                status: data.status || "",
+              });
+              if (data.status === "success") {
+                setBulkResults((prev) => [...prev, { link: data.link || "", status: "success" }]);
+              } else if (data.status === "failed") {
+                setBulkResults((prev) => [...prev, { link: data.link || "", status: "failed", error: data.error }]);
+              }
+            } else if (data.type === "complete") {
+              console.log("Download complete:", data.results);
+              setLoadingBulk(false);
+              fetchDownloadedFiles();
+              fetchHistory();
+              setProgress(null);
+              ws.close();
+            } else if (data.type === "error") {
+              console.error("WebSocket error message:", data.message);
+              setError(data.message || "An error occurred while downloading videos.");
+              setLoadingBulk(false);
+              setProgress(null);
+              ws.close();
+            }
+          };
+          ws.onerror = (err) => {
+            console.error("WebSocket connection error:", err);
+            if (remainingRetries > 0) {
+              console.log(`Retrying WebSocket connection (${remainingRetries} retries left)...`);
+              setTimeout(() => attemptConnection(remainingRetries - 1), delay);
+            } else {
+              reject(new Error("WebSocket connection failed after multiple attempts."));
+            }
+          };
+          ws.onclose = (event) => {
+            console.log("WebSocket closed:", event.code, event.reason);
+            if (event.code !== 1000) {
+              setError("WebSocket connection closed unexpectedly. Please try again.");
+              setLoadingBulk(false);
+              setProgress(null);
+            }
+          };
+          resolve();
+        };
+        ws.onerror = (err) => {
+          console.error("WebSocket connection error:", err);
+          if (remainingRetries > 0) {
+            console.log(`Retrying WebSocket connection (${remainingRetries} retries left)...`);
+            setTimeout(() => attemptConnection(remainingRetries - 1), delay);
+          } else {
+            reject(new Error("WebSocket connection failed after multiple attempts."));
+          }
+        };
+      };
+      attemptConnection(retries);
+    });
+  };
+
+  const handleUploadAndExtract = async () => {
     if (!file) {
       setError("Please select an Excel file to upload.");
       return;
     }
     setLoadingBulk(true);
     setError(null);
-
+    setBulkResults([]);
+    setProgress(null);
+  
+    // Step 1: Upload the Excel file
     const formData = new FormData();
     formData.append("file", file);
-
+  
     try {
-      const response = await axios.post("http://localhost:8000/upload-excel/", formData, {
+      const uploadResponse = await axios.post("http://localhost:8000/upload-excel/", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      console.log("Excel uploaded:", response.data);
-    } catch (err) {
-      console.error("Error uploading file:", err);
-      setError("Failed to upload file. Please try again.");
-    } finally {
-      setLoadingBulk(false);
-    }
-  };
-
-  const handleDownloadAll = async () => {
-    setLoadingBulk(true);
-    setError(null);
-    setBulkResults([]);
-
-    try {
-      const response = await axios.post("http://localhost:8000/download-all/");
-      setBulkResults(response.data.results);
-      fetchDownloadedFiles();
-      fetchHistory();
-    } catch (err) {
-      console.error("Error downloading videos:", err);
-      setError("Failed to download videos. Please try again.");
-    } finally {
+      console.log("Excel uploaded successfully:", uploadResponse.data);
+  
+      // Use HTTP request with simulated progress (WebSocket temporarily disabled)
+      const links = uploadResponse.data.links;
+      const total = links.length;
+  
+      // Simulate progress updates
+      for (let i = 0; i < total; i++) {
+        setProgress({
+          current: i + 1,
+          total: total,
+          link: links[i],
+          status: "downloading",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500)); // Simulate delay
+      }
+  
+      try {
+        const response = await axios.post("http://localhost:8000/download-all/");
+        console.log("HTTP download response:", response.data);
+        setBulkResults(response.data.results);
+        fetchDownloadedFiles();
+        fetchHistory();
+      } catch (httpErr: any) {
+        console.error("HTTP download failed:", httpErr.response ? httpErr.response.data : httpErr.message);
+        setError(httpErr.response?.data?.detail || "Failed to download videos via HTTP. Please try again.");
+      } finally {
+        setLoadingBulk(false);
+        setProgress(null);
+      }
+    } catch (err: any) {
+      console.error("Error in upload and extract:", err.response ? err.response.data : err.message);
+      setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
       setLoadingBulk(false);
     }
   };
@@ -103,25 +214,33 @@ const App: React.FC = () => {
     setSingleResult(null);
 
     try {
-      const response = await axios.post("http://localhost:8000/download-single/", { link: singleLink });
+      const response = await axios.post(`http://localhost:8000/download-single/?link=${encodeURIComponent(singleLink)}`);
+      console.log("Single video download response:", response.data);
       setSingleResult(response.data.results[0]);
       fetchDownloadedFiles();
       fetchHistory();
-    } catch (err) {
-      console.error("Error downloading single video:", err);
-      setError("Failed to download video. Please try again.");
+    } catch (err: any) {
+      console.error("Error downloading single video:", err.response ? err.response.data : err.message);
+      setError(err.response?.data?.detail || "Failed to download video. Please try again.");
     } finally {
       setLoadingSingle(false);
     }
   };
 
-  const openDownloadsFolder = () => {
-    alert("Please navigate to the 'downloads' folder in your backend directory to view the files.");
+  const handleDownloadAllFiles = () => {
+    downloadedFiles.forEach((file) => {
+      const link = document.createElement("a");
+      link.href = `http://localhost:8000/downloads/file/${encodeURIComponent(file)}`;
+      link.download = file;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
   };
 
   const toggleHistory = () => {
     if (!showHistory) {
-      fetchHistory(); // Fetch history when showing
+      fetchHistory();
     }
     setShowHistory(!showHistory);
   };
@@ -162,7 +281,7 @@ const App: React.FC = () => {
         </div>
         <div style={{ display: "flex", gap: "10px" }}>
           <button
-            onClick={handleUploadExcel}
+            onClick={handleUploadAndExtract}
             disabled={!file || loadingBulk}
             style={{
               flex: 1,
@@ -174,24 +293,27 @@ const App: React.FC = () => {
               cursor: loadingBulk || !file ? "not-allowed" : "pointer",
             }}
           >
-            {loadingBulk ? "Processing..." : "Upload"}
-          </button>
-          <button
-            onClick={handleDownloadAll}
-            disabled={loadingBulk}
-            style={{
-              flex: 1,
-              padding: "10px",
-              backgroundColor: loadingBulk ? "#ccc" : "#007bff",
-              color: "white",
-              border: "none",
-              borderRadius: "5px",
-              cursor: loadingBulk ? "not-allowed" : "pointer",
-            }}
-          >
-            {loadingBulk ? "Processing..." : "Download All"}
+            {loadingBulk ? "Processing..." : "Upload & Extract Videos"}
           </button>
         </div>
+        {progress && (
+          <div style={{ marginTop: "20px" }}>
+            <p>
+              Downloading {progress.current} of {progress.total}: {progress.link} ({progress.status}) -{" "}
+              {((progress.current / progress.total) * 100).toFixed(1)}%
+            </p>
+            <div style={{ backgroundColor: "#eee", borderRadius: "5px", height: "10px" }}>
+              <div
+                style={{
+                  width: `${(progress.current / progress.total) * 100}%`,
+                  backgroundColor: "#28a745",
+                  height: "100%",
+                  borderRadius: "5px",
+                }}
+              />
+            </div>
+          </div>
+        )}
         {bulkResults.length > 0 && (
           <div style={{ marginTop: "20px" }}>
             <h3>Download Results</h3>
@@ -270,17 +392,18 @@ const App: React.FC = () => {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
           <h2 style={{ fontSize: "18px", margin: 0 }}>Download Folder</h2>
           <button
-            onClick={openDownloadsFolder}
+            onClick={handleDownloadAllFiles}
+            disabled={downloadedFiles.length === 0}
             style={{
               padding: "5px 10px",
-              backgroundColor: "#007bff",
+              backgroundColor: downloadedFiles.length === 0 ? "#ccc" : "#007bff",
               color: "white",
               border: "none",
               borderRadius: "5px",
-              cursor: "pointer",
+              cursor: downloadedFiles.length === 0 ? "not-allowed" : "pointer",
             }}
           >
-            Open Folder
+            Download All
           </button>
         </div>
         {downloadedFiles.length > 0 ? (
@@ -323,20 +446,36 @@ const App: React.FC = () => {
 
       {/* Show Download History Button */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
-        <button
-          onClick={toggleHistory}
-          style={{
-            padding: "10px 20px",
-            backgroundColor: "#007bff",
-            color: "white",
-            border: "none",
-            borderRadius: "5px",
-            cursor: "pointer",
-            width: "100%",
-          }}
-        >
-          {showHistory ? "Hide Download History" : "Show Download History"}
-        </button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
+          <button
+            onClick={toggleHistory}
+            style={{
+              padding: "10px 20px",
+              backgroundColor: "#007bff",
+              color: "white",
+              border: "none",
+              borderRadius: "5px",
+              cursor: "pointer",
+            }}
+          >
+            {showHistory ? "Hide Download History" : "Show Download History"}
+          </button>
+          {showHistory && (
+            <button
+              onClick={clearHistory}
+              style={{
+                padding: "10px 20px",
+                backgroundColor: "#dc3545",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+              }}
+            >
+              Clear Download History
+            </button>
+          )}
+        </div>
 
         {/* Download History Section */}
         {showHistory && history.length > 0 && (
