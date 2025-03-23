@@ -41,6 +41,8 @@ const App: React.FC = () => {
     }
   };
 
+  const API_BASE_URL = "https://your-backend-service.onrender.com";  // Replace later
+  
   // Fetch download history
   const fetchHistory = async () => {
     try {
