@@ -18,6 +18,7 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
+const API_BASE_URL = "https://video-downloader-backend.onrender.com"; // Now used in API calls
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [singleLink, setSingleLink] = useState("");
@@ -34,19 +35,17 @@ const App: React.FC = () => {
   // Fetch list of downloaded files
   const fetchDownloadedFiles = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/downloads/list-files/");
+      const response = await axios.get(`${API_BASE_URL}/downloads/list-files/`);
       setDownloadedFiles(response.data.files);
     } catch (err) {
       console.error("Error fetching downloaded files:", err);
     }
   };
-
-  const API_BASE_URL = "https://your-backend-service.onrender.com";  // Replace later
   
   // Fetch download history
   const fetchHistory = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/downloads/history/");
+      const response = await axios.get(`${API_BASE_URL}/downloads/history/`);
       setHistory(response.data.downloads);
     } catch (err) {
       console.error("Error fetching history:", err);
@@ -56,7 +55,7 @@ const App: React.FC = () => {
   // Clear download history
   const clearHistory = async () => {
     try {
-      await axios.delete("http://localhost:8000/downloads/clear-history/");
+      await axios.delete(`${API_BASE_URL}/downloads/clear-history/`);
       setHistory([]);
     } catch (err) {
       console.error("Error clearing history:", err);
@@ -81,7 +80,7 @@ const App: React.FC = () => {
     return new Promise((resolve, reject) => {
       const attemptConnection = (remainingRetries: number) => {
         console.log(`Attempting WebSocket connection (${remainingRetries} retries left)...`);
-        const ws = new WebSocket("ws://127.0.0.1:8000/ws/download-all/");
+        const ws = new WebSocket(`wss://video-downloader-backend.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
         ws.onopen = () => {
           console.log("WebSocket connected successfully");
           ws.onmessage = (event) => {
@@ -166,7 +165,7 @@ const App: React.FC = () => {
     formData.append("file", file);
   
     try {
-      const uploadResponse = await axios.post("http://localhost:8000/upload-excel/", formData, {
+      const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
@@ -187,7 +186,7 @@ const App: React.FC = () => {
       }
   
       try {
-        const response = await axios.post("http://localhost:8000/download-all/");
+        const response = await axios.post(`${API_BASE_URL}/download-all/`);
         console.log("HTTP download response:", response.data);
         setBulkResults(response.data.results);
         fetchDownloadedFiles();
@@ -216,7 +215,7 @@ const App: React.FC = () => {
     setSingleResult(null);
 
     try {
-      const response = await axios.post(`http://localhost:8000/download-single/?link=${encodeURIComponent(singleLink)}`);
+      const response = await axios.post(`${API_BASE_URL}/download-single/?link=${encodeURIComponent(singleLink)}`);
       console.log("Single video download response:", response.data);
       setSingleResult(response.data.results[0]);
       fetchDownloadedFiles();
@@ -232,7 +231,7 @@ const App: React.FC = () => {
   const handleDownloadAllFiles = () => {
     downloadedFiles.forEach((file) => {
       const link = document.createElement("a");
-      link.href = `http://localhost:8000/downloads/file/${encodeURIComponent(file)}`;
+      link.href = `${API_BASE_URL}/downloads/file/${encodeURIComponent(file)}`;
       link.download = file;
       document.body.appendChild(link);
       link.click();
@@ -424,7 +423,7 @@ const App: React.FC = () => {
                 <div>
                   <span style={{ color: "#666", marginRight: "10px" }}>{(Math.random() * 5).toFixed(1)} MB</span>
                   <a
-                    href={`http://localhost:8000/downloads/file/${encodeURIComponent(file)}`}
+                    href={`${API_BASE_URL}/downloads/file/${encodeURIComponent(file)}`}
                     download
                     style={{
                       padding: "5px 10px",
