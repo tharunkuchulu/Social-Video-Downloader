@@ -250,8 +250,11 @@ const App: React.FC = () => {
   return (
     <div style={{ padding: "20px", maxWidth: "800px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
       <h1 style={{ display: "flex", alignItems: "center", fontSize: "24px", marginBottom: "20px" }}>
-        <span style={{ marginRight: "10px" }}>📥</span> Social Video Downloader
+       <img src="/logo.png" alt="Logo" style={{width: "50px", height: "40px"}}/> Social Video Downloader
       </h1>
+      <p><b>Download videos from Instagram, X seamlessly</b></p>
+      <p><b><u>Note</u>:</b> This service is only to download public account videos </p>
+      <p style={{position: "relative", left: "47px", fontSize: "12px",top: "-12px", color: "rgba(85, 84, 84, 0.76)", fontStyle: "italic"}}>(Private accounts are not be downloaded)</p>
 
       {/* Bulk Download Section */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
