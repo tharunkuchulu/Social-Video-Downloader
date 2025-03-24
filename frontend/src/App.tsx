@@ -81,7 +81,7 @@ const App: React.FC = () => {
     return new Promise((resolve, reject) => {
       const attemptConnection = (remainingRetries: number) => {
         console.log(`Attempting WebSocket connection (${remainingRetries} retries left)...`);
-        const ws = new WebSocket(`wss://video-downloader-backend.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
+        const ws = new WebSocket(`wss://video-downloader-backend-a9d5.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
         ws.onopen = () => {
           console.log("WebSocket connected successfully");
           ws.onmessage = (event) => {
