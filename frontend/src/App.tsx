@@ -18,7 +18,7 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
-const API_BASE_URL = "https://social-video-downloader-a9d5.onrender.com"; // Now used in API calls
+const API_BASE_URL = "https://social-video-downloader-backend-docker.onrender.com"; // Now used in API calls
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [singleLink, setSingleLink] = useState("");
@@ -81,7 +81,7 @@ const App: React.FC = () => {
     return new Promise((resolve, reject) => {
       const attemptConnection = (remainingRetries: number) => {
         console.log(`Attempting WebSocket connection (${remainingRetries} retries left)...`);
-        const ws = new WebSocket(`wss://video-downloader-backend-a9d5.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
+        const ws = new WebSocket(`wss://https://social-video-downloader-backend-docker.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
         ws.onopen = () => {
           console.log("WebSocket connected successfully");
           ws.onmessage = (event) => {
