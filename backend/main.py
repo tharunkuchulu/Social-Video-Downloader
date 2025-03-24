@@ -161,6 +161,9 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, webs
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             logger.info(f"Starting download for {link} in session {session_id}")
             ydl.download([link])
+            # Verify the file was created
+            files_after = os.listdir(user_downloads_dir)
+            logger.info(f"Files in {user_downloads_dir} after download: {files_after}")
             result = {"link": link, "status": "success"}
             if websocket:
                 await websocket.send_json({
@@ -200,13 +203,11 @@ async def download_videos(links: List[str], session_id: str, websocket: WebSocke
             # Determine the platform and set platform-specific options
             platform = get_platform(link)
             ydl_opts = {
-                "ffmpeg_location": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
                 "verbose": True,
                 "noplaylist": True,
                 "retries": 20,  # Increased retries for DNS failures
                 "fragment_retries": 20,
                 "abort_on_unavailable_fragments": False,
-                "cookiefile": "cookies.txt",
                 "logger": logging.getLogger(),
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -390,7 +391,7 @@ async def list_downloaded_files(session_id: str = Depends(get_session_id)):
         os.makedirs(user_downloads_dir, exist_ok=True)
         files = os.listdir(user_downloads_dir)
         video_files = [f for f in files if f.endswith(".mp4")]
-        logger.info(f"Listed {len(video_files)} downloaded files for session {session_id}")
+        logger.info(f"Listed {len(video_files)} downloaded files for session {session_id}: {video_files}")
         return JSONResponse(content={"files": video_files})
     except Exception as e:
         logger.error(f"Error listing files for session {session_id}: {str(e)}")
