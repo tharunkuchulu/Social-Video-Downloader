@@ -369,7 +369,7 @@ async def clear_download_history():
 
 @app.get("/test-download/")
 async def test_download():
-    links = ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    links = ["https://www.instagram.com/reel/DHLxrgdo0lM/?igsh=dnVvbHBhcTdlNW94"]
     try:
         # Clean up downloads folder before starting downloads
         cleanup_downloads_folder()
