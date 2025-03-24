@@ -177,6 +177,9 @@ async def download_videos(links: List[str], websocket: WebSocket = None):
         results = await asyncio.gather(*tasks)
     return results
 
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Social Video Downloader API. Visit /docs for API documentation."}
 @app.post("/upload-excel/")
 async def upload_excel(file: UploadFile):
     if not file.filename.endswith(".xlsx"):
