@@ -157,7 +157,7 @@ async def download_videos(links: List[str], websocket: WebSocket = None):
                 "retries": 20,  # Increased retries for DNS failures
                 "fragment_retries": 20,
                 "abort_on_unavailable_fragments": False,
-                "cookiesfrombrowser": ("chrome"),
+                "cookiefile": "cookies.txt",
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 },  # Add user-agent to avoid rate-limiting
