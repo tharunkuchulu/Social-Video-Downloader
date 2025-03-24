@@ -18,7 +18,7 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
-const API_BASE_URL = "https://video-downloader-backend.onrender.com"; // Now used in API calls
+const API_BASE_URL = "https://social-video-downloader-a9d5.onrender.com"; // Now used in API calls
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [singleLink, setSingleLink] = useState("");
@@ -76,6 +76,7 @@ const App: React.FC = () => {
     }
   };
 
+  // @ts-expect-error TS6133: 'connectWebSocket' is declared but its value is never read.
   const connectWebSocket = (retries = 5, delay = 3000): Promise<void> => {
     return new Promise((resolve, reject) => {
       const attemptConnection = (remainingRetries: number) => {
