@@ -8,17 +8,6 @@ interface DownloadResult {
   error?: string;
 }
 
-interface ProgressUpdate {
-  type: string;
-  current?: number;
-  total?: number;
-  link?: string;
-  status?: string;
-  error?: string;
-  message?: string;
-  results?: DownloadResult[];
-}
-
 interface FileInfo {
   name: string;
   size: number; // Size in bytes
@@ -114,8 +103,8 @@ const App: React.FC = () => {
 
   const handleUploadAndExtract = async () => {
     if (!file) {
-        setError("Please select an Excel file to upload.");
-        return;
+      setError("Please select an Excel file to upload.");
+      return;
     }
     setLoadingBulk(true);
     setError(null);
@@ -126,43 +115,43 @@ const App: React.FC = () => {
     formData.append("file", file);
 
     try {
-        console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
-        const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
-            headers: { "Content-Type": "multipart/form-data" },
+      console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
+      const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      console.log("Excel uploaded successfully:", uploadResponse.data);
+
+      // Use HTTP endpoint directly (WebSocket disabled)
+      console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
+      const response = await axios.post(`${API_BASE_URL}/download-all/`);
+      console.log("HTTP download response:", response.data);
+      setBulkResults(response.data.results);
+
+      const total = response.data.results.length;
+      for (let i = 0; i < total; i++) {
+        setProgress({
+          current: i + 1,
+          total: total,
+          link: response.data.results[i].link,
+          status: response.data.results[i].status,
         });
-        console.log("Excel uploaded successfully:", uploadResponse.data);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
 
-        // Use HTTP endpoint directly
-        console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
-        const response = await axios.post(`${API_BASE_URL}/download-all/`);
-        console.log("HTTP download response:", response.data);
-        setBulkResults(response.data.results);
-
-        const total = response.data.results.length;
-        for (let i = 0; i < total; i++) {
-            setProgress({
-                current: i + 1,
-                total: total,
-                link: response.data.results[i].link,
-                status: response.data.results[i].status,
-            });
-            await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-
-        fetchDownloadedFiles();
-        fetchHistory();
+      fetchDownloadedFiles();
+      fetchHistory();
     } catch (err: any) {
-        console.error("Error in upload and extract:", {
-            message: err.message,
-            response: err.response ? err.response.data : null,
-            status: err.response ? err.response.status : null,
-        });
-        setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
+      console.error("Error in upload and extract:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
+      setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
     } finally {
-        setLoadingBulk(false);
-        setProgress(null);
+      setLoadingBulk(false);
+      setProgress(null);
     }
-};
+  };
 
   const handleDownloadSingle = async () => {
     if (!singleLink) {
