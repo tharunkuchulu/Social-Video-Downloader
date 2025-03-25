@@ -19,7 +19,7 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = "https://social-video-downloader-a9d5.onrender.com";
 
 // Configure axios to send cookies with all requests
 axios.defaults.withCredentials = true;
