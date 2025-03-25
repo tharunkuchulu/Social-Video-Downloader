@@ -114,8 +114,8 @@ const App: React.FC = () => {
 
   const handleUploadAndExtract = async () => {
     if (!file) {
-      setError("Please select an Excel file to upload.");
-      return;
+        setError("Please select an Excel file to upload.");
+        return;
     }
     setLoadingBulk(true);
     setError(null);
@@ -126,103 +126,43 @@ const App: React.FC = () => {
     formData.append("file", file);
 
     try {
-      console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
-      const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      console.log("Excel uploaded successfully:", uploadResponse.data);
-
-      // Try WebSocket for real-time progress updates
-      const wsUrl = `${API_BASE_URL.replace("http", "ws").replace("https", "wss")}/ws/download-all/`;
-      console.log("Connecting to WebSocket at:", wsUrl);
-      let ws: WebSocket | null = null;
-
-      try {
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-          console.log("WebSocket connection opened");
-        };
-
-        ws.onmessage = (event) => {
-          const data: ProgressUpdate = JSON.parse(event.data);
-          console.log("WebSocket message received:", data);
-
-          if (data.type === "progress") {
-            setProgress({
-              current: data.current!,
-              total: data.total!,
-              link: data.link!,
-              status: data.status!,
-            });
-          } else if (data.type === "complete") {
-            setBulkResults(data.results!);
-            fetchDownloadedFiles();
-            fetchHistory();
-            setLoadingBulk(false);
-            setProgress(null);
-            ws?.close();
-          } else if (data.type === "error") {
-            throw new Error(data.message || "Failed to download videos via WebSocket.");
-          }
-        };
-
-        ws.onerror = (error) => {
-          console.error("WebSocket error:", error);
-          throw new Error("WebSocket connection failed.");
-        };
-
-        ws.onclose = () => {
-          console.log("WebSocket connection closed");
-        };
-
-        // Wait for the WebSocket to complete or fail
-        await new Promise<void>((resolve, reject) => {
-          ws!.onclose = () => resolve();
-          ws!.onerror = () => reject(new Error("WebSocket connection failed."));
+        console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
+        const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
+            headers: { "Content-Type": "multipart/form-data" },
         });
-      } catch (wsErr: any) {
-        console.error("WebSocket failed, falling back to HTTP:", wsErr.message);
-        setError("Real-time updates unavailable. Falling back to HTTP download...");
+        console.log("Excel uploaded successfully:", uploadResponse.data);
 
-        // Fallback to HTTP endpoint
-        try {
-          console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
-          const response = await axios.post(`${API_BASE_URL}/download-all/`);
-          console.log("HTTP download response:", response.data);
-          setBulkResults(response.data.results);
+        // Use HTTP endpoint directly
+        console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
+        const response = await axios.post(`${API_BASE_URL}/download-all/`);
+        console.log("HTTP download response:", response.data);
+        setBulkResults(response.data.results);
 
-          const total = response.data.results.length;
-          for (let i = 0; i < total; i++) {
+        const total = response.data.results.length;
+        for (let i = 0; i < total; i++) {
             setProgress({
-              current: i + 1,
-              total: total,
-              link: response.data.results[i].link,
-              status: response.data.results[i].status,
+                current: i + 1,
+                total: total,
+                link: response.data.results[i].link,
+                status: response.data.results[i].status,
             });
             await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-
-          fetchDownloadedFiles();
-          fetchHistory();
-        } catch (httpErr: any) {
-          console.error("HTTP download failed:", httpErr.response ? httpErr.response.data : httpErr.message);
-          setError(httpErr.response?.data?.detail || "Failed to download videos via HTTP. Please try again.");
-        } finally {
-          setLoadingBulk(false);
-          setProgress(null);
         }
-      }
+
+        fetchDownloadedFiles();
+        fetchHistory();
     } catch (err: any) {
-      console.error("Error in upload and extract:", {
-        message: err.message,
-        response: err.response ? err.response.data : null,
-        status: err.response ? err.response.status : null,
-      });
-      setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
-      setLoadingBulk(false);
+        console.error("Error in upload and extract:", {
+            message: err.message,
+            response: err.response ? err.response.data : null,
+            status: err.response ? err.response.status : null,
+        });
+        setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
+    } finally {
+        setLoadingBulk(false);
+        setProgress(null);
     }
-  };
+};
 
   const handleDownloadSingle = async () => {
     if (!singleLink) {
