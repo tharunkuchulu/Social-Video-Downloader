@@ -19,7 +19,16 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
-const API_BASE_URL = "https://social-video-downloader-a9d5.onrender.com";
+interface FileInfo {
+  name: string;
+  size: number; // Size in bytes
+}
+
+// Dynamically set the API base URL based on the environment
+const API_BASE_URL =
+  process.env.NODE_ENV === "development"
+    ? "http://127.0.0.1:8000"
+    : "https://social-video-downloader-a9d5.onrender.com";
 
 // Configure axios to send cookies with all requests
 axios.defaults.withCredentials = true;
@@ -30,7 +39,7 @@ axiosRetry(axios, {
   retryDelay: (retryCount) => retryCount * 1000,
   retryCondition: (error) => {
     return (
-      axiosRetry.isNetworkOrIdempotentRequestError(error) || 
+      axiosRetry.isNetworkOrIdempotentRequestError(error) ||
       (error.response?.status !== undefined && error.response.status >= 500)
     );
   },
@@ -45,9 +54,11 @@ const App: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingBulk, setLoadingBulk] = useState(false);
   const [loadingSingle, setLoadingSingle] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingClearHistory, setLoadingClearHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
-  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [downloadedFiles, setDownloadedFiles] = useState<FileInfo[]>([]);
+  const [progress, setProgress] = useState<{ current: number; total: number; link: string; status: string } | null>(null);
 
   const fetchDownloadedFiles = async () => {
     try {
@@ -61,6 +72,7 @@ const App: React.FC = () => {
   };
 
   const fetchHistory = async () => {
+    setLoadingHistory(true);
     try {
       console.log("Fetching history from:", `${API_BASE_URL}/downloads/history/`);
       const response = await axios.get(`${API_BASE_URL}/downloads/history/`);
@@ -68,16 +80,22 @@ const App: React.FC = () => {
       setHistory(response.data.downloads);
     } catch (err) {
       console.error("Error fetching history:", err);
+      setError("Failed to fetch download history. Please try again.");
+    } finally {
+      setLoadingHistory(false);
     }
   };
 
   const clearHistory = async () => {
+    setLoadingClearHistory(true);
     try {
       await axios.delete(`${API_BASE_URL}/downloads/clear-history/`);
       setHistory([]);
     } catch (err) {
       console.error("Error clearing history:", err);
       setError("Failed to clear download history. Please try again.");
+    } finally {
+      setLoadingClearHistory(false);
     }
   };
 
@@ -103,92 +121,97 @@ const App: React.FC = () => {
     setError(null);
     setBulkResults([]);
     setProgress(null);
-  
+
     const formData = new FormData();
     formData.append("file", file);
-  
+
     try {
       console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
       const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
-  
-      // Use WebSocket for real-time progress updates with retry logic
-      const wsProtocol = API_BASE_URL.startsWith("https") ? "wss" : "ws";
-      const wsUrl = `${wsProtocol}://${API_BASE_URL.replace(/^https?:\/\//, "")}/ws/download-all/`;
-      
-      const connectWebSocket = async (retries = 3, delay = 2000): Promise<WebSocket> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-          try {
-            const ws = new WebSocket(wsUrl);
-            await new Promise((resolve, reject) => {
-              ws.onopen = () => {
-                console.log(`WebSocket connection established on attempt ${attempt}`);
-                resolve(ws);
-              };
-              ws.onerror = (error) => {
-                console.error(`WebSocket connection failed on attempt ${attempt}:`, error);
-                reject(error);
-              };
-            });
-            return ws;
-          } catch (error) {
-            if (attempt === retries) {
-              throw new Error("Max retries reached for WebSocket connection");
-            }
-            console.log(`Retrying WebSocket connection (${attempt}/${retries}) after ${delay}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-          }
-        }
-        throw new Error("Failed to establish WebSocket connection after retries");
-      };
-  
+
+      // Try WebSocket for real-time progress updates
+      const wsUrl = `${API_BASE_URL.replace("http", "ws").replace("https", "wss")}/ws/download-all/`;
+      console.log("Connecting to WebSocket at:", wsUrl);
+      let ws: WebSocket | null = null;
+
       try {
-        const ws = await connectWebSocket();
-  
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log("WebSocket connection opened");
+        };
+
         ws.onmessage = (event) => {
           const data: ProgressUpdate = JSON.parse(event.data);
           console.log("WebSocket message received:", data);
-  
+
           if (data.type === "progress") {
-            setProgress(data);
+            setProgress({
+              current: data.current!,
+              total: data.total!,
+              link: data.link!,
+              status: data.status!,
+            });
           } else if (data.type === "complete") {
-            setBulkResults(data.results || []);
+            setBulkResults(data.results!);
             fetchDownloadedFiles();
             fetchHistory();
             setLoadingBulk(false);
             setProgress(null);
-            ws.close();
+            ws?.close();
           } else if (data.type === "error") {
-            setError(data.message || "An error occurred during download.");
-            setLoadingBulk(false);
-            setProgress(null);
-            ws.close();
-          } else if (data.type === "heartbeat") {
-            console.log("Heartbeat received");
+            throw new Error(data.message || "Failed to download videos via WebSocket.");
           }
         };
-  
+
         ws.onerror = (error) => {
           console.error("WebSocket error:", error);
-          setError("WebSocket connection failed. Please try again.");
-          setLoadingBulk(false);
-          setProgress(null);
+          throw new Error("WebSocket connection failed.");
         };
-  
+
         ws.onclose = () => {
           console.log("WebSocket connection closed");
         };
-  
-        // Cleanup on component unmount or error
-        return () => {
-          ws.close();
-        };
-      } catch (error) {
-        console.error("Failed to establish WebSocket connection after retries:", error);
-        setError("Failed to connect to the server for downloading videos. Please try again.");
-        setLoadingBulk(false);
+
+        // Wait for the WebSocket to complete or fail
+        await new Promise<void>((resolve, reject) => {
+          ws!.onclose = () => resolve();
+          ws!.onerror = () => reject(new Error("WebSocket connection failed."));
+        });
+      } catch (wsErr: any) {
+        console.error("WebSocket failed, falling back to HTTP:", wsErr.message);
+        setError("Real-time updates unavailable. Falling back to HTTP download...");
+
+        // Fallback to HTTP endpoint
+        try {
+          console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
+          const response = await axios.post(`${API_BASE_URL}/download-all/`);
+          console.log("HTTP download response:", response.data);
+          setBulkResults(response.data.results);
+
+          const total = response.data.results.length;
+          for (let i = 0; i < total; i++) {
+            setProgress({
+              current: i + 1,
+              total: total,
+              link: response.data.results[i].link,
+              status: response.data.results[i].status,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+
+          fetchDownloadedFiles();
+          fetchHistory();
+        } catch (httpErr: any) {
+          console.error("HTTP download failed:", httpErr.response ? httpErr.response.data : httpErr.message);
+          setError(httpErr.response?.data?.detail || "Failed to download videos via HTTP. Please try again.");
+        } finally {
+          setLoadingBulk(false);
+          setProgress(null);
+        }
       }
     } catch (err: any) {
       console.error("Error in upload and extract:", {
@@ -200,7 +223,6 @@ const App: React.FC = () => {
       setLoadingBulk(false);
     }
   };
-  
 
   const handleDownloadSingle = async () => {
     if (!singleLink) {
@@ -228,8 +250,8 @@ const App: React.FC = () => {
   const handleDownloadAllFiles = () => {
     downloadedFiles.forEach((file) => {
       const link = document.createElement("a");
-      link.href = `${API_BASE_URL}/downloads/file/${encodeURIComponent(file)}`;
-      link.download = file;
+      link.href = `${API_BASE_URL}/downloads/file/${encodeURIComponent(file.name)}`;
+      link.download = file.name;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -241,6 +263,14 @@ const App: React.FC = () => {
       fetchHistory();
     }
     setShowHistory(!showHistory);
+  };
+
+  // Convert bytes to a human-readable format
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
   return (
@@ -298,7 +328,7 @@ const App: React.FC = () => {
             {loadingBulk ? "Processing..." : "Upload & Extract Videos"}
           </button>
         </div>
-        {progress && progress.type === "progress" && progress.current && progress.total && (
+        {progress && (
           <div style={{ marginTop: "20px" }}>
             <p>
               Downloading {progress.current} of {progress.total}: {progress.link} ({progress.status}) -{" "}
@@ -418,11 +448,11 @@ const App: React.FC = () => {
                   borderBottom: "1px solid #eee",
                 }}
               >
-                <span>📹 {file}</span>
+                <span>📹 {file.name}</span>
                 <div>
-                  <span style={{ color: "#666", marginRight: "10px" }}>{(Math.random() * 5).toFixed(1)} MB</span>
+                  <span style={{ color: "#666", marginRight: "10px" }}>{formatFileSize(file.size)}</span>
                   <a
-                    href={`${API_BASE_URL}/downloads/file/${encodeURIComponent(file)}`}
+                    href={`${API_BASE_URL}/downloads/file/${encodeURIComponent(file.name)}`}
                     download
                     style={{
                       padding: "5px 10px",
@@ -448,30 +478,32 @@ const App: React.FC = () => {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
           <button
             onClick={toggleHistory}
+            disabled={loadingHistory}
             style={{
               padding: "10px 20px",
-              backgroundColor: "#007bff",
+              backgroundColor: loadingHistory ? "#ccc" : "#007bff",
               color: "white",
               border: "none",
               borderRadius: "5px",
-              cursor: "pointer",
+              cursor: loadingHistory ? "not-allowed" : "pointer",
             }}
           >
-            {showHistory ? "Hide Download History" : "Show Download History"}
+            {loadingHistory ? "Loading..." : showHistory ? "Hide Download History" : "Show Download History"}
           </button>
           {showHistory && (
             <button
               onClick={clearHistory}
+              disabled={loadingClearHistory}
               style={{
                 padding: "10px 20px",
-                backgroundColor: "#dc3545",
+                backgroundColor: loadingClearHistory ? "#ccc" : "#dc3545",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
-                cursor: "pointer",
+                cursor: loadingClearHistory ? "not-allowed" : "pointer",
               }}
             >
-              Clear Download History
+              {loadingClearHistory ? "Clearing..." : "Clear Download History"}
             </button>
           )}
         </div>

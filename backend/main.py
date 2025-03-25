@@ -203,7 +203,6 @@ async def download_videos(links: List[str], session_id: str, websocket: WebSocke
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             },
-            # Removed cookiefile as it's not needed for public videos
         }
         if platform == "instagram":
             ydl_opts["format"] = "bestvideo[height<=720]+bestaudio/best"
@@ -266,6 +265,7 @@ async def upload_excel(file: UploadFile):
 
 @app.websocket("/ws/download-all/")
 async def websocket_download_all(websocket: WebSocket, session_id: str = Depends(get_session_id)):
+    logger.info(f"WebSocket connection opened for session {session_id}")
     await websocket.accept()
     try:
         async def send_heartbeat():
@@ -288,10 +288,12 @@ async def websocket_download_all(websocket: WebSocket, session_id: str = Depends
         results = await download_videos(links, session_id, websocket)
         await websocket.send_json({"type": "complete", "results": results})
         await websocket.close()
+        logger.info(f"WebSocket connection closed for session {session_id} after successful download")
     except Exception as e:
         logger.error(f"Error in WebSocket download for session {session_id}: {str(e)}")
         await websocket.send_json({"type": "error", "message": "Failed to download videos. Please try again."})
         await websocket.close()
+        logger.info(f"WebSocket connection closed for session {session_id} due to error")
     finally:
         heartbeat_task.cancel()
 
