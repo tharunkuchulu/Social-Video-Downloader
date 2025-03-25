@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# CORS configuration
+# CORS configuration - Add first to ensure CORS headers are applied
 origins = [
     "http://localhost:5173",
     "https://social-video-downloader-1.onrender.com",
@@ -40,7 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Middleware to handle session cookies
+# Middleware to handle session cookies - Add after CORSMiddleware
 class SessionCookieMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         session_id = request.cookies.get("session_id")
@@ -59,6 +59,23 @@ class SessionCookieMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SessionCookieMiddleware)
+
+# Custom exception handler to ensure CORS headers are included in error responses
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    headers = {
+        "Access-Control-Allow-Origin": "https://social-video-downloader-1.onrender.com",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    if request.headers.get("origin") == "http://localhost:5173":
+        headers["Access-Control-Allow-Origin"] = "http://localhost:5173"
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=headers,
+    )
 
 async def get_session_id(request: Request):
     session_id = request.state.session_id
@@ -280,6 +297,7 @@ async def download_all(session_id: str = Depends(get_session_id)):
         raise HTTPException(status_code=400, detail="No video links available. Please upload an Excel file first.")
     
     try:
+        logger.info(f"Links to download for session {session_id}: {links}")
         cleanup_downloads_folder(session_id)
         await downloads_collection.delete_many({"session_id": session_id})
         await files_collection.delete_many({"session_id": session_id})  # Clear previous file metadata
@@ -288,7 +306,7 @@ async def download_all(session_id: str = Depends(get_session_id)):
         return {"results": results}
     except Exception as e:
         logger.error(f"Error in download-all for session {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to download videos. Please try again.")
+        raise HTTPException(status_code=500, detail=f"Failed to download videos: {str(e)}")
 
 @app.post("/download-single/")
 async def download_single(link: str = Query(...), session_id: str = Depends(get_session_id)):
