@@ -82,6 +82,7 @@ try:
     db = client["video_downloader"]
     links_collection = db["links"]
     downloads_collection = db["downloads"]
+    files_collection = db["files"]  # New collection for file metadata
     logger.info("Connected to MongoDB Atlas successfully")
 except Exception as e:
     logger.error(f"Failed to connect to MongoDB Atlas: {str(e)}")
@@ -142,12 +143,24 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, tota
     def progress_hook(d):
         if d.get('status') == 'finished':
             final_filename = d.get('filename')
-            if final_filename:
+            if final_filename and os.path.exists(final_filename):
                 base, ext = os.path.splitext(final_filename)
                 sanitized_base = sanitize_filename(base)
                 new_filename = f"{sanitized_base}.mp4"
-                os.rename(final_filename, os.path.join(user_downloads_dir, new_filename))
-                logger.info(f"Renamed file to: {new_filename}")
+                new_filepath = os.path.join(user_downloads_dir, new_filename)
+                try:
+                    os.rename(final_filename, new_filepath)
+                    logger.info(f"Renamed file to: {new_filepath}")
+                    # Store file metadata in MongoDB
+                    file_size = os.path.getsize(new_filepath)
+                    asyncio.create_task(files_collection.insert_one({
+                        "session_id": session_id,
+                        "filename": new_filename,
+                        "size": file_size
+                    }))
+                    logger.info(f"Stored file metadata in MongoDB: {new_filename} ({file_size} bytes) for session {session_id}")
+                except Exception as e:
+                    logger.error(f"Failed to rename file {final_filename} to {new_filepath}: {str(e)}")
 
     ydl_opts["outtmpl"] = f"{user_downloads_dir}/%(title)s.%(ext)s"
     ydl_opts["progress_hooks"] = [progress_hook]
@@ -163,13 +176,23 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, tota
             if not files_after:
                 raise Exception("No files were created after download")
             result = {"link": link, "status": "success"}
-            await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "success"})
+            # Insert download history into MongoDB with error handling
+            try:
+                await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "success"})
+                logger.info(f"Successfully inserted download history for {link} in session {session_id}")
+            except Exception as e:
+                logger.error(f"Failed to insert download history for {link} in session {session_id}: {str(e)}")
             logger.info(f"Successfully downloaded {link} in session {session_id}")
             return result
     except Exception as e:
         logger.error(f"Failed to download {link} in session {session_id}: {str(e)}")
         result = {"link": link, "status": "failed", "error": str(e)}
-        await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "failed", "error": str(e)})
+        # Insert failed download history into MongoDB with error handling
+        try:
+            await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "failed", "error": str(e)})
+            logger.info(f"Successfully inserted failed download history for {link} in session {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to insert failed download history for {link} in session {session_id}: {str(e)}")
         return result
 
 async def download_videos(links: List[str], session_id: str):
@@ -259,6 +282,7 @@ async def download_all(session_id: str = Depends(get_session_id)):
     try:
         cleanup_downloads_folder(session_id)
         await downloads_collection.delete_many({"session_id": session_id})
+        await files_collection.delete_many({"session_id": session_id})  # Clear previous file metadata
         results = await download_videos(links, session_id)
         logger.info(f"Completed download-all with {len(results)} results for session {session_id}: {results}")
         return {"results": results}
@@ -275,6 +299,7 @@ async def download_single(link: str = Query(...), session_id: str = Depends(get_
     try:
         cleanup_downloads_folder(session_id)
         await downloads_collection.delete_many({"session_id": session_id})
+        await files_collection.delete_many({"session_id": session_id})  # Clear previous file metadata
         results = await download_videos([link], session_id)
         logger.info(f"Completed download-single for {link} in session {session_id}: {results}")
         return {"results": results}
@@ -285,6 +310,7 @@ async def download_single(link: str = Query(...), session_id: str = Depends(get_
 @app.get("/downloads/list-files/")
 async def list_downloaded_files(session_id: str = Depends(get_session_id)):
     try:
+        # First, check the filesystem for any existing files
         user_downloads_dir = os.path.join(DOWNLOAD_FOLDER, session_id)
         os.makedirs(user_downloads_dir, exist_ok=True)
         files = os.listdir(user_downloads_dir)
@@ -292,8 +318,22 @@ async def list_downloaded_files(session_id: str = Depends(get_session_id)):
             {"name": f, "size": os.path.getsize(os.path.join(user_downloads_dir, f))}
             for f in files if f.endswith(".mp4")
         ]
-        logger.info(f"Listed {len(video_files)} downloaded files for session {session_id}: {[f['name'] for f in video_files]}")
-        return {"files": video_files}
+        logger.info(f"Listed {len(video_files)} downloaded files from filesystem for session {session_id}: {[f['name'] for f in video_files]}")
+
+        # Also fetch file metadata from MongoDB
+        mongo_files = [item async for item in files_collection.find({"session_id": session_id}, {"_id": 0, "filename": 1, "size": 1})]
+        mongo_files = [{"name": f["filename"], "size": f["size"]} for f in mongo_files]
+        logger.info(f"Fetched {len(mongo_files)} downloaded files from MongoDB for session {session_id}: {[f['name'] for f in mongo_files]}")
+
+        # Combine filesystem and MongoDB results, avoiding duplicates
+        combined_files = {f["name"]: f for f in video_files}
+        for mongo_file in mongo_files:
+            if mongo_file["name"] not in combined_files:
+                combined_files[mongo_file["name"]] = mongo_file
+
+        final_files = list(combined_files.values())
+        logger.info(f"Final list of {len(final_files)} downloaded files for session {session_id}: {[f['name'] for f in final_files]}")
+        return {"files": final_files}
     except Exception as e:
         logger.error(f"Error listing files for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to list downloaded files. Please try again.")
@@ -322,7 +362,8 @@ async def get_download_history(session_id: str = Depends(get_session_id)):
 async def clear_download_history(session_id: str = Depends(get_session_id)):
     try:
         await downloads_collection.delete_many({"session_id": session_id})
-        logger.info(f"Download history cleared successfully for session {session_id}")
+        await files_collection.delete_many({"session_id": session_id})  # Also clear file metadata
+        logger.info(f"Download history and file metadata cleared successfully for session {session_id}")
         return {"message": "Download history cleared successfully"}
     except Exception as e:
         logger.error(f"Error clearing download history for session {session_id}: {str(e)}")

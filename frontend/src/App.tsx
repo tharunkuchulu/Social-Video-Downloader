@@ -52,11 +52,18 @@ const App: React.FC = () => {
   const fetchDownloadedFiles = async () => {
     try {
       console.log("Fetching downloaded files from:", `${API_BASE_URL}/downloads/list-files/`);
-      const response = await axios.get(`${API_BASE_URL}/downloads/list-files/`);
+      const response = await axios.get(`${API_BASE_URL}/downloads/list-files/`, {
+        withCredentials: true,
+      });
       console.log("Downloaded files response:", response.data);
       setDownloadedFiles(response.data.files);
-    } catch (err) {
-      console.error("Error fetching downloaded files:", err);
+    } catch (err: any) {
+      console.error("Error fetching downloaded files:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
+      setError("Failed to fetch downloaded files. Please try again.");
     }
   };
 
@@ -64,11 +71,17 @@ const App: React.FC = () => {
     setLoadingHistory(true);
     try {
       console.log("Fetching history from:", `${API_BASE_URL}/downloads/history/`);
-      const response = await axios.get(`${API_BASE_URL}/downloads/history/`);
+      const response = await axios.get(`${API_BASE_URL}/downloads/history/`, {
+        withCredentials: true,
+      });
       console.log("History response:", response.data);
       setHistory(response.data.downloads);
-    } catch (err) {
-      console.error("Error fetching history:", err);
+    } catch (err: any) {
+      console.error("Error fetching history:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
       setError("Failed to fetch download history. Please try again.");
     } finally {
       setLoadingHistory(false);
@@ -78,10 +91,16 @@ const App: React.FC = () => {
   const clearHistory = async () => {
     setLoadingClearHistory(true);
     try {
-      await axios.delete(`${API_BASE_URL}/downloads/clear-history/`);
+      await axios.delete(`${API_BASE_URL}/downloads/clear-history/`, {
+        withCredentials: true,
+      });
       setHistory([]);
-    } catch (err) {
-      console.error("Error clearing history:", err);
+    } catch (err: any) {
+      console.error("Error clearing history:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
       setError("Failed to clear download history. Please try again.");
     } finally {
       setLoadingClearHistory(false);
@@ -118,12 +137,15 @@ const App: React.FC = () => {
       console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
       const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        withCredentials: true,
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
 
       // Use HTTP endpoint directly (WebSocket disabled)
       console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
-      const response = await axios.post(`${API_BASE_URL}/download-all/`);
+      const response = await axios.post(`${API_BASE_URL}/download-all/`, {}, {
+        withCredentials: true,
+      });
       console.log("HTTP download response:", response.data);
       setBulkResults(response.data.results);
 
@@ -163,13 +185,19 @@ const App: React.FC = () => {
     setSingleResult(null);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/download-single/?link=${encodeURIComponent(singleLink)}`);
+      const response = await axios.post(`${API_BASE_URL}/download-single/?link=${encodeURIComponent(singleLink)}`, {}, {
+        withCredentials: true,
+      });
       console.log("Single video download response:", response.data);
       setSingleResult(response.data.results[0]);
       fetchDownloadedFiles();
       fetchHistory();
     } catch (err: any) {
-      console.error("Error downloading single video:", err.response ? err.response.data : err.message);
+      console.error("Error downloading single video:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
       setError(err.response?.data?.detail || "Failed to download video. Please try again.");
     } finally {
       setLoadingSingle(false);
