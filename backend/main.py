@@ -273,7 +273,25 @@ async def upload_excel(file: UploadFile):
 
 @app.websocket("/ws/download-all/")
 async def websocket_download_all(websocket: WebSocket, session_id: str = Depends(get_session_id)):
-    await websocket.accept()
+    # Validate origin
+    origin = websocket.headers.get("origin")
+    allowed_origins = [
+        "http://localhost:5173",
+        "https://social-video-downloader-1.onrender.com",
+    ]
+    if origin not in allowed_origins:
+        logger.warning(f"WebSocket connection rejected: Invalid origin {origin}")
+        await websocket.close(code=1008, reason="Invalid origin")
+        return
+
+    try:
+        await websocket.accept()
+        logger.info(f"WebSocket connection accepted for session {session_id} from origin {origin}")
+    except Exception as e:
+        logger.error(f"Failed to accept WebSocket connection for session {session_id}: {str(e)}")
+        await websocket.close(code=1011, reason="Server error")
+        return
+
     try:
         async def send_heartbeat():
             while True:
