@@ -47,7 +47,7 @@ const App: React.FC = () => {
   const [loadingSingle, setLoadingSingle] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
-  const [progress, setProgress] = useState<{ current: number; total: number; link: string; status: string } | null>(null);
+  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
 
   const fetchDownloadedFiles = async () => {
     try {
@@ -103,42 +103,92 @@ const App: React.FC = () => {
     setError(null);
     setBulkResults([]);
     setProgress(null);
-
+  
     const formData = new FormData();
     formData.append("file", file);
-
+  
     try {
       console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
       const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
-
-      try {
-        console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
-        const response = await axios.post(`${API_BASE_URL}/download-all/`);
-        console.log("HTTP download response:", response.data);
-        setBulkResults(response.data.results);
-
-        const total = response.data.results.length;
-        for (let i = 0; i < total; i++) {
-          setProgress({
-            current: i + 1,
-            total: total,
-            link: response.data.results[i].link,
-            status: response.data.results[i].status,
-          });
-          await new Promise((resolve) => setTimeout(resolve, 500));
+  
+      // Use WebSocket for real-time progress updates with retry logic
+      const wsProtocol = API_BASE_URL.startsWith("https") ? "wss" : "ws";
+      const wsUrl = `${wsProtocol}://${API_BASE_URL.replace(/^https?:\/\//, "")}/ws/download-all/`;
+      
+      const connectWebSocket = async (retries = 3, delay = 2000): Promise<WebSocket> => {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const ws = new WebSocket(wsUrl);
+            await new Promise((resolve, reject) => {
+              ws.onopen = () => {
+                console.log(`WebSocket connection established on attempt ${attempt}`);
+                resolve(ws);
+              };
+              ws.onerror = (error) => {
+                console.error(`WebSocket connection failed on attempt ${attempt}:`, error);
+                reject(error);
+              };
+            });
+            return ws;
+          } catch (error) {
+            if (attempt === retries) {
+              throw new Error("Max retries reached for WebSocket connection");
+            }
+            console.log(`Retrying WebSocket connection (${attempt}/${retries}) after ${delay}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
         }
-
-        fetchDownloadedFiles();
-        fetchHistory();
-      } catch (httpErr: any) {
-        console.error("HTTP download failed:", httpErr.response ? httpErr.response.data : httpErr.message);
-        setError(httpErr.response?.data?.detail || "Failed to download videos via HTTP. Please try again.");
-      } finally {
+        throw new Error("Failed to establish WebSocket connection after retries");
+      };
+  
+      try {
+        const ws = await connectWebSocket();
+  
+        ws.onmessage = (event) => {
+          const data: ProgressUpdate = JSON.parse(event.data);
+          console.log("WebSocket message received:", data);
+  
+          if (data.type === "progress") {
+            setProgress(data);
+          } else if (data.type === "complete") {
+            setBulkResults(data.results || []);
+            fetchDownloadedFiles();
+            fetchHistory();
+            setLoadingBulk(false);
+            setProgress(null);
+            ws.close();
+          } else if (data.type === "error") {
+            setError(data.message || "An error occurred during download.");
+            setLoadingBulk(false);
+            setProgress(null);
+            ws.close();
+          } else if (data.type === "heartbeat") {
+            console.log("Heartbeat received");
+          }
+        };
+  
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setError("WebSocket connection failed. Please try again.");
+          setLoadingBulk(false);
+          setProgress(null);
+        };
+  
+        ws.onclose = () => {
+          console.log("WebSocket connection closed");
+        };
+  
+        // Cleanup on component unmount or error
+        return () => {
+          ws.close();
+        };
+      } catch (error) {
+        console.error("Failed to establish WebSocket connection after retries:", error);
+        setError("Failed to connect to the server for downloading videos. Please try again.");
         setLoadingBulk(false);
-        setProgress(null);
       }
     } catch (err: any) {
       console.error("Error in upload and extract:", {
@@ -150,6 +200,7 @@ const App: React.FC = () => {
       setLoadingBulk(false);
     }
   };
+  
 
   const handleDownloadSingle = async () => {
     if (!singleLink) {
@@ -247,7 +298,7 @@ const App: React.FC = () => {
             {loadingBulk ? "Processing..." : "Upload & Extract Videos"}
           </button>
         </div>
-        {progress && (
+        {progress && progress.type === "progress" && progress.current && progress.total && (
           <div style={{ marginTop: "20px" }}>
             <p>
               Downloading {progress.current} of {progress.total}: {progress.link} ({progress.status}) -{" "}
