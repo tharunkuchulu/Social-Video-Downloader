@@ -7,17 +7,13 @@ import yt_dlp
 import os
 import subprocess
 from typing import List
-from pymongo import MongoClient
-from bson import ObjectId
-import json
-import copy
+from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import asyncio
 import concurrent.futures
-import time
 import logging
 import uuid
-import re  # Added for filename sanitization
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -32,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# CORS configuration
 origins = [
-    "http://localhost:5173",  # Local development
-    "https://social-video-downloader-1.onrender.com",  # Deployed frontend
+    "http://localhost:5173",
+    "https://social-video-downloader-1.onrender.com",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -80,7 +77,8 @@ except FileNotFoundError:
 
 # Connect to MongoDB Atlas
 try:
-    client = MongoClient(os.getenv("MONGODB_URI"))
+    MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+    client = AsyncIOMotorClient(MONGODB_URI)
     db = client["video_downloader"]
     links_collection = db["links"]
     downloads_collection = db["downloads"]
@@ -97,12 +95,6 @@ except Exception as e:
     logger.error(f"Failed to create downloads folder: {str(e)}")
     raise Exception(f"Failed to create downloads folder: {str(e)}")
 
-class MongoJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, ObjectId):
-            return str(obj)
-        return super().default(obj)
-
 def get_platform(link: str) -> str:
     if "instagram.com" in link:
         return "instagram"
@@ -113,7 +105,6 @@ def get_platform(link: str) -> str:
     return "unknown"
 
 def sanitize_filename(filename: str) -> str:
-    # Remove invalid characters and replace spaces with underscores
     return re.sub(r'[^\w\s-]', '', filename).replace(' ', '_')
 
 def cleanup_downloads_folder(session_id: str):
@@ -154,13 +145,13 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, webs
             if final_filename:
                 base, ext = os.path.splitext(final_filename)
                 sanitized_base = sanitize_filename(base)
-                new_filename = f"{sanitized_base}.mp4"  # Force .mp4 extension
+                new_filename = f"{sanitized_base}.mp4"
                 os.rename(final_filename, os.path.join(user_downloads_dir, new_filename))
                 logger.info(f"Renamed file to: {new_filename}")
 
     ydl_opts["outtmpl"] = f"{user_downloads_dir}/%(title)s.%(ext)s"
     ydl_opts["progress_hooks"] = [progress_hook]
-    ydl_opts["merge_output_format"] = "mp4"  # Ensure this is set for all platforms
+    ydl_opts["merge_output_format"] = "mp4"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -171,6 +162,7 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, webs
             if not files_after:
                 raise Exception("No files were created after download")
             result = {"link": link, "status": "success"}
+            await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "success"})
             if websocket:
                 await websocket.send_json({
                     "type": "progress",
@@ -184,6 +176,7 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, webs
     except Exception as e:
         logger.error(f"Failed to download {link} in session {session_id}: {str(e)}")
         result = {"link": link, "status": "failed", "error": str(e)}
+        await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "failed", "error": str(e)})
         if websocket:
             await websocket.send_json({
                 "type": "progress",
@@ -214,7 +207,7 @@ async def download_videos(links: List[str], session_id: str, websocket: WebSocke
                 "http_headers": {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 },
-                "cookiefile": "cookies.txt",  # Add cookiefile for authentication
+                "cookiefile": "cookies.txt",
             }
             if platform == "instagram":
                 ydl_opts["format"] = "bestvideo[height<=720]+bestaudio/best"
@@ -261,10 +254,10 @@ async def upload_excel(file: UploadFile):
             logger.error("Excel file missing 'video_link' column")
             raise ValueError("Excel file must contain a 'video_link' column")
         links = df["video_link"].dropna().tolist()
-        links_collection.delete_many({})
-        links_collection.insert_many([{"link": link} for link in links])
+        await links_collection.delete_many({})
+        await links_collection.insert_many([{"link": link} for link in links])
         logger.info(f"Uploaded Excel file with {len(links)} links")
-        return JSONResponse(content={"message": "Excel file uploaded successfully", "links": links})
+        return {"links": links}
     except Exception as e:
         logger.error(f"Error reading Excel file {file.filename}: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Error reading Excel file: {str(e)}")
@@ -290,7 +283,7 @@ async def websocket_download_all(websocket: WebSocket, session_id: str = Depends
                     break
 
         heartbeat_task = asyncio.create_task(send_heartbeat())
-        links = [item["link"] for item in links_collection.find({}, {"_id": 0, "link": 1})]
+        links = [item["link"] async for item in links_collection.find({}, {"_id": 0, "link": 1})]
         if not links:
             await websocket.send_json({"type": "error", "message": "No video links available. Please upload an Excel file first."})
             await websocket.close()
@@ -298,11 +291,6 @@ async def websocket_download_all(websocket: WebSocket, session_id: str = Depends
 
         cleanup_downloads_folder(session_id)
         results = await download_videos(links, session_id, websocket)
-        results_copy = copy.deepcopy(results)
-        for result in results_copy:
-            result["session_id"] = session_id
-        if results:
-            downloads_collection.insert_many(results_copy)
         await websocket.send_json({"type": "complete", "results": results})
         await websocket.close()
     except Exception as e:
@@ -314,22 +302,17 @@ async def websocket_download_all(websocket: WebSocket, session_id: str = Depends
 
 @app.post("/download-all/")
 async def download_all(session_id: str = Depends(get_session_id)):
-    links = [item["link"] for item in links_collection.find({}, {"_id": 0, "link": 1})]
+    links = [item["link"] async for item in links_collection.find({}, {"_id": 0, "link": 1})]
     if not links:
         logger.warning(f"No video links available for download-all in session {session_id}")
         raise HTTPException(status_code=400, detail="No video links available. Please upload an Excel file first.")
     
     try:
         cleanup_downloads_folder(session_id)
-        downloads_collection.delete_many({"session_id": session_id})
+        await downloads_collection.delete_many({"session_id": session_id})
         results = await download_videos(links, session_id)
-        results_copy = copy.deepcopy(results)
-        for result in results_copy:
-            result["session_id"] = session_id
-        if results:
-            downloads_collection.insert_many(results_copy)
         logger.info(f"Completed download-all with {len(results)} results for session {session_id}")
-        return JSONResponse(content={"results": results})
+        return {"results": results}
     except Exception as e:
         logger.error(f"Error in download-all for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error downloading videos: {str(e)}")
@@ -342,15 +325,10 @@ async def download_single(link: str = Query(...), session_id: str = Depends(get_
     
     try:
         cleanup_downloads_folder(session_id)
-        downloads_collection.delete_many({"session_id": session_id})
+        await downloads_collection.delete_many({"session_id": session_id})
         results = await download_videos([link], session_id)
-        results_copy = copy.deepcopy(results)
-        for result in results_copy:
-            result["session_id"] = session_id
-        if results:
-            downloads_collection.insert_many(results_copy)
         logger.info(f"Completed download-single for {link} in session {session_id}")
-        return JSONResponse(content={"results": results})
+        return {"results": results}
     except Exception as e:
         logger.error(f"Error in download-single for {link} in session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error downloading video: {str(e)}")
@@ -363,7 +341,7 @@ async def list_downloaded_files(session_id: str = Depends(get_session_id)):
         files = os.listdir(user_downloads_dir)
         video_files = [f for f in files if f.endswith(".mp4")]
         logger.info(f"Listed {len(video_files)} downloaded files for session {session_id}: {video_files}")
-        return JSONResponse(content={"files": video_files})
+        return {"files": video_files}
     except Exception as e:
         logger.error(f"Error listing files for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
@@ -381,9 +359,9 @@ async def get_file(filename: str, session_id: str = Depends(get_session_id)):
 @app.get("/downloads/history/")
 async def get_download_history(session_id: str = Depends(get_session_id)):
     try:
-        downloads = list(downloads_collection.find({"session_id": session_id}, {"_id": 0}))
+        downloads = [item async for item in downloads_collection.find({"session_id": session_id}, {"_id": 0})]
         logger.info(f"Fetched download history with {len(downloads)} entries for session {session_id}")
-        return JSONResponse(content={"downloads": downloads})
+        return {"downloads": downloads}
     except Exception as e:
         logger.error(f"Error fetching download history for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching download history: {str(e)}")
@@ -391,9 +369,9 @@ async def get_download_history(session_id: str = Depends(get_session_id)):
 @app.delete("/downloads/clear-history/")
 async def clear_download_history(session_id: str = Depends(get_session_id)):
     try:
-        downloads_collection.delete_many({"session_id": session_id})
+        await downloads_collection.delete_many({"session_id": session_id})
         logger.info(f"Download history cleared successfully for session {session_id}")
-        return JSONResponse(content={"message": "Download history cleared successfully"})
+        return {"message": "Download history cleared successfully"}
     except Exception as e:
         logger.error(f"Error clearing download history for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error clearing download history: {str(e)}")
@@ -404,19 +382,13 @@ async def test_download(session_id: str = Depends(get_session_id)):
     try:
         cleanup_downloads_folder(session_id)
         results = await download_videos(links, session_id)
-        results_copy = copy.deepcopy(results)
-        for result in results_copy:
-            result["session_id"] = session_id
-        if results:
-            downloads_collection.insert_many(results_copy)
         logger.info(f"Completed test download with {len(results)} results for session {session_id}")
-        return JSONResponse(content={"results": results})
+        return {"results": results}
     except Exception as e:
         logger.error(f"Error in test download for session {session_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error in test download: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    import os
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)

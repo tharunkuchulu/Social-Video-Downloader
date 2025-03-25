@@ -26,10 +26,9 @@ axios.defaults.withCredentials = true;
 
 // Configure axios to retry requests
 axiosRetry(axios, {
-  retries: 3, // Retry 3 times
-  retryDelay: (retryCount) => retryCount * 1000, // Wait 1s, 2s, 3s between retries
+  retries: 3,
+  retryDelay: (retryCount) => retryCount * 1000,
   retryCondition: (error) => {
-    // Retry on network errors or 5xx status codes
     return axiosRetry.isNetworkOrIdempotentRequestError(error) || (error.response && error.response.status >= 500);
   },
 });
@@ -49,16 +48,20 @@ const App: React.FC = () => {
 
   const fetchDownloadedFiles = async () => {
     try {
+      console.log("Fetching downloaded files from:", `${API_BASE_URL}/downloads/list-files/`);
       const response = await axios.get(`${API_BASE_URL}/downloads/list-files/`);
+      console.log("Downloaded files response:", response.data);
       setDownloadedFiles(response.data.files);
     } catch (err) {
       console.error("Error fetching downloaded files:", err);
     }
   };
-  
+
   const fetchHistory = async () => {
     try {
+      console.log("Fetching history from:", `${API_BASE_URL}/downloads/history/`);
       const response = await axios.get(`${API_BASE_URL}/downloads/history/`);
+      console.log("History response:", response.data);
       setHistory(response.data.downloads);
     } catch (err) {
       console.error("Error fetching history:", err);
@@ -114,7 +117,6 @@ const App: React.FC = () => {
         console.log("HTTP download response:", response.data);
         setBulkResults(response.data.results);
 
-        // Simulate progress based on the actual download results
         const total = response.data.results.length;
         for (let i = 0; i < total; i++) {
           setProgress({
@@ -190,11 +192,13 @@ const App: React.FC = () => {
   return (
     <div style={{ padding: "20px", maxWidth: "800px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
       <h1 style={{ display: "flex", alignItems: "center", fontSize: "24px", marginBottom: "20px" }}>
-       <img src="/logo.png" alt="Logo" style={{width: "50px", height: "40px"}}/> Social Video Downloader
+        <img src="/logo.png" alt="Logo" style={{ width: "50px", height: "40px" }} /> Social Video Downloader
       </h1>
       <p><b>Download videos from Instagram, X seamlessly</b></p>
       <p><b><u>Note</u>:</b> This service is only to download public account videos </p>
-      <p style={{position: "relative", left: "47px", fontSize: "12px",top: "-12px", color: "rgba(85, 84, 84, 0.76)", fontStyle: "italic"}}>(Private accounts are not be downloaded)</p>
+      <p style={{ position: "relative", left: "47px", fontSize: "12px", top: "-12px", color: "rgba(85, 84, 84, 0.76)", fontStyle: "italic" }}>
+        (Private accounts are not be downloaded)
+      </p>
 
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>Bulk Download with Excel</h2>
