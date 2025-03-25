@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import axiosRetry from "axios-retry";
 
 interface DownloadResult {
   link: string;
@@ -22,6 +23,16 @@ const API_BASE_URL = "https://social-video-downloader-a9d5.onrender.com";
 
 // Configure axios to send cookies with all requests
 axios.defaults.withCredentials = true;
+
+// Configure axios to retry requests
+axiosRetry(axios, {
+  retries: 3, // Retry 3 times
+  retryDelay: (retryCount) => retryCount * 1000, // Wait 1s, 2s, 3s between retries
+  retryCondition: (error) => {
+    // Retry on network errors or 5xx status codes
+    return axiosRetry.isNetworkOrIdempotentRequestError(error) || (error.response && error.response.status >= 500);
+  },
+});
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -86,33 +97,35 @@ const App: React.FC = () => {
     setError(null);
     setBulkResults([]);
     setProgress(null);
-  
+
     const formData = new FormData();
     formData.append("file", file);
-  
+
     try {
+      console.log("Uploading Excel file to:", `${API_BASE_URL}/upload-excel/`);
       const uploadResponse = await axios.post(`${API_BASE_URL}/upload-excel/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
-  
-      const links = uploadResponse.data.links;
-      const total = links.length;
-  
-      for (let i = 0; i < total; i++) {
-        setProgress({
-          current: i + 1,
-          total: total,
-          link: links[i],
-          status: "downloading",
-        });
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-  
+
       try {
+        console.log("Calling download-all endpoint:", `${API_BASE_URL}/download-all/`);
         const response = await axios.post(`${API_BASE_URL}/download-all/`);
         console.log("HTTP download response:", response.data);
         setBulkResults(response.data.results);
+
+        // Simulate progress based on the actual download results
+        const total = response.data.results.length;
+        for (let i = 0; i < total; i++) {
+          setProgress({
+            current: i + 1,
+            total: total,
+            link: response.data.results[i].link,
+            status: response.data.results[i].status,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+
         fetchDownloadedFiles();
         fetchHistory();
       } catch (httpErr: any) {
@@ -123,7 +136,11 @@ const App: React.FC = () => {
         setProgress(null);
       }
     } catch (err: any) {
-      console.error("Error in upload and extract:", err.response ? err.response.data : err.message);
+      console.error("Error in upload and extract:", {
+        message: err.message,
+        response: err.response ? err.response.data : null,
+        status: err.response ? err.response.status : null,
+      });
       setError(err.response?.data?.detail || "Failed to upload and extract videos. Please try again.");
       setLoadingBulk(false);
     }

@@ -32,9 +32,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+origins = [
+    "http://localhost:5173",  # Local development
+    "https://social-video-downloader-1.onrender.com",  # Deployed frontend
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
