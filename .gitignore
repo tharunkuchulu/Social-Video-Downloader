@@ -30,3 +30,5 @@ grok.txt
 install_ffempg.txt
 
 .env
+
+!cookies.txt

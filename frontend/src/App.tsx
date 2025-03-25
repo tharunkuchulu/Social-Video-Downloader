@@ -18,7 +18,11 @@ interface ProgressUpdate {
   results?: DownloadResult[];
 }
 
-const API_BASE_URL = "https://social-video-downloader-backend-docker.onrender.com"; // Now used in API calls
+const API_BASE_URL = "https://social-video-downloader-backend-docker.onrender.com";
+
+// Configure axios to send cookies with all requests
+axios.defaults.withCredentials = true;
+
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [singleLink, setSingleLink] = useState("");
@@ -32,7 +36,6 @@ const App: React.FC = () => {
   const [downloadedFiles, setDownloadedFiles] = useState<string[]>([]);
   const [progress, setProgress] = useState<{ current: number; total: number; link: string; status: string } | null>(null);
 
-  // Fetch list of downloaded files
   const fetchDownloadedFiles = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/downloads/list-files/`);
@@ -42,7 +45,6 @@ const App: React.FC = () => {
     }
   };
   
-  // Fetch download history
   const fetchHistory = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/downloads/history/`);
@@ -52,7 +54,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Clear download history
   const clearHistory = async () => {
     try {
       await axios.delete(`${API_BASE_URL}/downloads/clear-history/`);
@@ -76,81 +77,6 @@ const App: React.FC = () => {
     }
   };
 
-  // @ts-expect-error TS6133: 'connectWebSocket' is declared but its value is never read.
-  const connectWebSocket = (retries = 5, delay = 3000): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const attemptConnection = (remainingRetries: number) => {
-        console.log(`Attempting WebSocket connection (${remainingRetries} retries left)...`);
-        const ws = new WebSocket(`wss://https://social-video-downloader-backend-docker.onrender.com/ws/download-all/`); // Updated to use wss and Render URL
-        ws.onopen = () => {
-          console.log("WebSocket connected successfully");
-          ws.onmessage = (event) => {
-            console.log("WebSocket message received:", event.data);
-            const data: ProgressUpdate = JSON.parse(event.data);
-            if (data.type === "heartbeat") {
-              console.log("Received WebSocket heartbeat");
-              return;
-            }
-            if (data.type === "progress") {
-              setProgress({
-                current: data.current || 0,
-                total: data.total || 0,
-                link: data.link || "",
-                status: data.status || "",
-              });
-              if (data.status === "success") {
-                setBulkResults((prev) => [...prev, { link: data.link || "", status: "success" }]);
-              } else if (data.status === "failed") {
-                setBulkResults((prev) => [...prev, { link: data.link || "", status: "failed", error: data.error }]);
-              }
-            } else if (data.type === "complete") {
-              console.log("Download complete:", data.results);
-              setLoadingBulk(false);
-              fetchDownloadedFiles();
-              fetchHistory();
-              setProgress(null);
-              ws.close();
-            } else if (data.type === "error") {
-              console.error("WebSocket error message:", data.message);
-              setError(data.message || "An error occurred while downloading videos.");
-              setLoadingBulk(false);
-              setProgress(null);
-              ws.close();
-            }
-          };
-          ws.onerror = (err) => {
-            console.error("WebSocket connection error:", err);
-            if (remainingRetries > 0) {
-              console.log(`Retrying WebSocket connection (${remainingRetries} retries left)...`);
-              setTimeout(() => attemptConnection(remainingRetries - 1), delay);
-            } else {
-              reject(new Error("WebSocket connection failed after multiple attempts."));
-            }
-          };
-          ws.onclose = (event) => {
-            console.log("WebSocket closed:", event.code, event.reason);
-            if (event.code !== 1000) {
-              setError("WebSocket connection closed unexpectedly. Please try again.");
-              setLoadingBulk(false);
-              setProgress(null);
-            }
-          };
-          resolve();
-        };
-        ws.onerror = (err) => {
-          console.error("WebSocket connection error:", err);
-          if (remainingRetries > 0) {
-            console.log(`Retrying WebSocket connection (${remainingRetries} retries left)...`);
-            setTimeout(() => attemptConnection(remainingRetries - 1), delay);
-          } else {
-            reject(new Error("WebSocket connection failed after multiple attempts."));
-          }
-        };
-      };
-      attemptConnection(retries);
-    });
-  };
-
   const handleUploadAndExtract = async () => {
     if (!file) {
       setError("Please select an Excel file to upload.");
@@ -161,7 +87,6 @@ const App: React.FC = () => {
     setBulkResults([]);
     setProgress(null);
   
-    // Step 1: Upload the Excel file
     const formData = new FormData();
     formData.append("file", file);
   
@@ -171,11 +96,9 @@ const App: React.FC = () => {
       });
       console.log("Excel uploaded successfully:", uploadResponse.data);
   
-      // Use HTTP request with simulated progress (WebSocket temporarily disabled)
       const links = uploadResponse.data.links;
       const total = links.length;
   
-      // Simulate progress updates
       for (let i = 0; i < total; i++) {
         setProgress({
           current: i + 1,
@@ -183,7 +106,7 @@ const App: React.FC = () => {
           link: links[i],
           status: "downloading",
         });
-        await new Promise((resolve) => setTimeout(resolve, 500)); // Simulate delay
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
   
       try {
@@ -256,7 +179,6 @@ const App: React.FC = () => {
       <p><b><u>Note</u>:</b> This service is only to download public account videos </p>
       <p style={{position: "relative", left: "47px", fontSize: "12px",top: "-12px", color: "rgba(85, 84, 84, 0.76)", fontStyle: "italic"}}>(Private accounts are not be downloaded)</p>
 
-      {/* Bulk Download Section */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>Bulk Download with Excel</h2>
         <div style={{ border: "2px dashed #ccc", padding: "20px", textAlign: "center", marginBottom: "15px" }}>
@@ -342,7 +264,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Single Video Download Section */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>Single Video Download</h2>
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -392,7 +313,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Download Folder Section */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
           <h2 style={{ fontSize: "18px", margin: 0 }}>Download Folder</h2>
@@ -449,7 +369,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Show Download History Button */}
       <div style={{ backgroundColor: "white", padding: "20px", borderRadius: "10px", boxShadow: "0 2px 5px rgba(0,0,0,0.1)", marginBottom: "20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
           <button
@@ -482,7 +401,6 @@ const App: React.FC = () => {
           )}
         </div>
 
-        {/* Download History Section */}
         {showHistory && history.length > 0 && (
           <div style={{ marginTop: "20px" }}>
             <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>Download History</h2>
@@ -506,14 +424,12 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Error Message */}
       {error && (
         <div style={{ color: "red", marginTop: "20px", textAlign: "center" }}>
           {error}
         </div>
       )}
 
-      {/* Footer */}
       <footer style={{ textAlign: "center", marginTop: "20px", color: "#666", fontSize: "14px" }}>
         © 2025 Social Video Downloader. All rights reserved.
       </footer>
