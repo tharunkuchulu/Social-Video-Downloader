@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, HTTPException, WebSocket, Depends, Query, Request, Response
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import pandas as pd
@@ -10,7 +10,6 @@ from typing import List
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 import asyncio
-import concurrent.futures
 import logging
 import uuid
 import re
@@ -76,8 +75,11 @@ except FileNotFoundError:
     logger.error("ffmpeg is not found in PATH. Please ensure ffmpeg is installed and added to your PATH.")
 
 # Connect to MongoDB Atlas
+MONGODB_URI = os.getenv("MONGODB_URI")
+if not MONGODB_URI:
+    logger.error("MONGODB_URI environment variable not set")
+    raise Exception("MONGODB_URI environment variable is required")
 try:
-    MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
     client = AsyncIOMotorClient(MONGODB_URI)
     db = client["video_downloader"]
     links_collection = db["links"]
@@ -135,7 +137,7 @@ def cleanup_downloads_folder(session_id: str):
     except Exception as e:
         logger.error(f"Error during downloads folder cleanup for user {session_id}: {str(e)}")
 
-async def download_single_video(link: str, ydl_opts: dict, session_id: str, websocket: WebSocket = None, total: int = 1, current: int = 1):
+async def download_single_video(link: str, ydl_opts: dict, session_id: str, semaphore: asyncio.Semaphore, websocket: WebSocket = None, total: int = 1, current: int = 1):
     user_downloads_dir = os.path.join(DOWNLOAD_FOLDER, session_id)
     os.makedirs(user_downloads_dir, exist_ok=True)
 
@@ -153,73 +155,73 @@ async def download_single_video(link: str, ydl_opts: dict, session_id: str, webs
     ydl_opts["progress_hooks"] = [progress_hook]
     ydl_opts["merge_output_format"] = "mp4"
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Starting download for {link} in session {session_id}")
-            ydl.download([link])
-            files_after = os.listdir(user_downloads_dir)
-            logger.info(f"Files in {user_downloads_dir} after download: {files_after}")
-            if not files_after:
-                raise Exception("No files were created after download")
-            result = {"link": link, "status": "success"}
-            await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "success"})
+    async with semaphore:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"Starting download for {link} in session {session_id}")
+                ydl.download([link])
+                files_after = os.listdir(user_downloads_dir)
+                logger.info(f"Files in {user_downloads_dir} after download: {files_after}")
+                if not files_after:
+                    raise Exception("No files were created after download")
+                result = {"link": link, "status": "success"}
+                if websocket:
+                    await websocket.send_json({
+                        "type": "progress",
+                        "current": current,
+                        "total": total,
+                        "link": link,
+                        "status": "success"
+                    })
+                logger.info(f"Successfully downloaded {link} in session {session_id}")
+                return result
+        except Exception as e:
+            logger.error(f"Failed to download {link} in session {session_id}: {str(e)}")
+            result = {"link": link, "status": "failed", "error": str(e)}
             if websocket:
                 await websocket.send_json({
                     "type": "progress",
                     "current": current,
                     "total": total,
                     "link": link,
-                    "status": "success"
+                    "status": "failed",
+                    "error": str(e)
                 })
-            logger.info(f"Successfully downloaded {link} in session {session_id}")
             return result
-    except Exception as e:
-        logger.error(f"Failed to download {link} in session {session_id}: {str(e)}")
-        result = {"link": link, "status": "failed", "error": str(e)}
-        await downloads_collection.insert_one({"session_id": session_id, "link": link, "status": "failed", "error": str(e)})
-        if websocket:
-            await websocket.send_json({
-                "type": "progress",
-                "current": current,
-                "total": total,
-                "link": link,
-                "status": "failed",
-                "error": str(e)
-            })
-        return result
 
-async def download_videos(links: List[str], session_id: str, websocket: WebSocket = None):
+async def download_videos(links: List[str], session_id: str, websocket: WebSocket = None, max_concurrent_downloads: int = 3):
     total = len(links)
-    results = []
-    loop = asyncio.get_event_loop()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        tasks = []
-        for i, link in enumerate(links):
-            await asyncio.sleep(2)
-            platform = get_platform(link)
-            ydl_opts = {
-                "verbose": True,
-                "noplaylist": True,
-                "retries": 20,
-                "fragment_retries": 20,
-                "abort_on_unavailable_fragments": False,
-                "logger": logging.getLogger(),
-                "http_headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-                },
-                "cookiefile": "cookies.txt",
-            }
-            if platform == "instagram":
-                ydl_opts["format"] = "bestvideo[height<=720]+bestaudio/best"
-                ydl_opts["merge_output_format"] = "mp4"
-            else:
-                ydl_opts["format"] = "best[height<=720]"
-                ydl_opts["merge_output_format"] = "mp4"
+    semaphore = asyncio.Semaphore(max_concurrent_downloads)  # Limit concurrent downloads
+    tasks = []
+    for i, link in enumerate(links):
+        await asyncio.sleep(2)  # Avoid rate-limiting
+        platform = get_platform(link)
+        ydl_opts = {
+            "verbose": True,
+            "noplaylist": True,
+            "retries": 20,
+            "fragment_retries": 20,
+            "abort_on_unavailable_fragments": False,
+            "logger": logging.getLogger(),
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            },
+            "cookiefile": "cookies.txt",
+        }
+        if platform == "instagram":
+            ydl_opts["format"] = "bestvideo[height<=720]+bestaudio/best"
+            ydl_opts["merge_output_format"] = "mp4"
+        else:
+            ydl_opts["format"] = "best[height<=720]"
+            ydl_opts["merge_output_format"] = "mp4"
 
-            tasks.append(
-                loop.run_in_executor(pool, lambda link=link, idx=i+1: asyncio.run(download_single_video(link, ydl_opts, session_id, websocket, total, idx)))
-            )
-        results = await asyncio.gather(*tasks)
+        tasks.append(download_single_video(link, ydl_opts, session_id, semaphore, websocket, total, i + 1))
+    
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Batch insert results into the database
+    results_with_session = [{"session_id": session_id, **result} for result in results if not isinstance(result, Exception)]
+    if results_with_session:
+        await downloads_collection.insert_many(results_with_session)
     return results
 
 @app.get("/")
